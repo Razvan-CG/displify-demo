@@ -1,0 +1,29 @@
+# --- Git / GitHub ---
+.git
+.github
+.gitignore
+.gitattributes
+
+# --- IDE / Editor ---
+.vscode
+.idea
+*.swp
+*.swo
+
+# --- Node / Build ---
+node_modules
+dist
+.angular
+
+# --- Docker (prevent recursive copy) ---
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# --- Misc ---
+README.md
+*.md
+*.log
+npm-debug.log*
+.editorconfig
+.browserslistrc

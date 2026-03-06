@@ -1,0 +1,16 @@
+services:
+  displify-shell:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: displify-shell
+    ports:
+      - "8080:80"
+    volumes:
+      # Persist JSON data files across container restarts.
+      # On first run, Docker copies the built assets into this volume.
+      - app-data:/usr/share/nginx/html/assets
+    restart: unless-stopped
+
+volumes:
+  app-data:
