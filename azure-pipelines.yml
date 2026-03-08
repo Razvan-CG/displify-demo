@@ -1,0 +1,181 @@
+# ═══════════════════════════════════════════════════════════════
+# Displify Shell — Azure DevOps CI/CD Pipeline (v2)
+# ═══════════════════════════════════════════════════════════════
+# Angular 17 → Build → Zip Deploy → Azure App Service
+# Trigger: push to main | PR validation
+# Stages: Build & Validate → Deploy to Production
+# ═══════════════════════════════════════════════════════════════
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - README.md
+      - docs/**
+      - '*.md'
+      - flow.md
+
+pr:
+  branches:
+    include:
+      - main
+
+# ── Variables ────────────────────────────────────────────────
+# webAppName must be set as a pipeline variable (the setup
+# script creates it automatically).
+# ─────────────────────────────────────────────────────────────
+variables:
+  nodeVersion: '18.x'
+  buildConfiguration: 'production'
+  artifactName: 'angular-app'
+  azureServiceConnection: 'arm-$(webAppName)'
+
+# ═══════════════════════════════════════════════════════════════
+# STAGE 1 — BUILD & VALIDATE
+# ═══════════════════════════════════════════════════════════════
+stages:
+  - stage: Build
+    displayName: 'Build & Validate'
+    jobs:
+      - job: BuildAngular
+        displayName: 'Build Angular App'
+        pool:
+          vmImage: 'ubuntu-latest'
+
+        steps:
+          # ── Node.js Setup ──────────────────────────────────
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '$(nodeVersion)'
+            displayName: 'Install Node.js $(nodeVersion)'
+
+          # ── Dependency Cache ───────────────────────────────
+          - task: Cache@2
+            inputs:
+              key: 'npm | "$(Agent.OS)" | package-lock.json'
+              path: '$(System.DefaultWorkingDirectory)/node_modules'
+              restoreKeys: |
+                npm | "$(Agent.OS)"
+            displayName: 'Cache node_modules'
+
+          # ── Install Dependencies ───────────────────────────
+          - script: npm ci
+            displayName: 'Install dependencies (npm ci)'
+            workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+          # ── Build for Production ───────────────────────────
+          - script: npx ng build --configuration=$(buildConfiguration)
+            displayName: 'Build Angular (production)'
+            workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+          # ── Verify Build Output ────────────────────────────
+          - script: |
+              echo "=== Build output contents ==="
+              ls -la dist/displify-demo-v1/browser/
+              echo ""
+              echo "=== Total size ==="
+              du -sh dist/displify-demo-v1/browser/
+            displayName: 'Verify build output'
+            workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+          # ── Generate web.config (IIS SPA fallback) ─────────
+          # Included so the app works on both Windows and Linux
+          # App Service. Linux ignores it; Windows IIS needs it.
+          - script: |
+              cat > dist/displify-demo-v1/browser/web.config << 'XMLEOF'
+              <?xml version="1.0" encoding="UTF-8"?>
+              <configuration>
+                <system.webServer>
+                  <rewrite>
+                    <rules>
+                      <rule name="Angular SPA" stopProcessing="true">
+                        <match url=".*" />
+                        <conditions logicalGrouping="MatchAll">
+                          <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="true" />
+                          <add input="{REQUEST_FILENAME}" matchType="IsDirectory" negate="true" />
+                        </conditions>
+                        <action type="Rewrite" url="/index.html" />
+                      </rule>
+                    </rules>
+                  </rewrite>
+                  <staticContent>
+                    <remove fileExtension=".json" />
+                    <mimeMap fileExtension=".json" mimeType="application/json" />
+                    <remove fileExtension=".woff2" />
+                    <mimeMap fileExtension=".woff2" mimeType="font/woff2" />
+                  </staticContent>
+                </system.webServer>
+              </configuration>
+              XMLEOF
+            displayName: 'Generate web.config (SPA fallback)'
+            workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+          # ── Archive Build ──────────────────────────────────
+          - task: ArchiveFiles@2
+            inputs:
+              rootFolderOrFile: '$(System.DefaultWorkingDirectory)/dist/displify-demo-v1/browser'
+              includeRootFolder: false
+              archiveType: 'zip'
+              archiveFile: '$(Build.ArtifactStagingDirectory)/$(artifactName).zip'
+              replaceExistingArchive: true
+            displayName: 'Archive build output'
+
+          # ── Publish Artifact ───────────────────────────────
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/$(artifactName).zip'
+              artifact: '$(artifactName)'
+              publishLocation: 'pipeline'
+            displayName: 'Publish pipeline artifact'
+
+  # ═══════════════════════════════════════════════════════════════
+  # STAGE 2 — DEPLOY TO AZURE APP SERVICE
+  # ═══════════════════════════════════════════════════════════════
+  - stage: Deploy
+    displayName: 'Deploy to Azure'
+    dependsOn: Build
+    # Only deploy on push to main (skip PR validation builds)
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployToAppService
+        displayName: 'Deploy to App Service'
+        pool:
+          vmImage: 'ubuntu-latest'
+        environment: 'production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                # ── Download Artifact ────────────────────────
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifactName: '$(artifactName)'
+                    targetPath: '$(Pipeline.Workspace)/drop'
+                  displayName: 'Download build artifact'
+
+                # ── Deploy via Zip Deploy ────────────────────
+                - task: AzureWebApp@1
+                  inputs:
+                    azureSubscription: '$(azureServiceConnection)'
+                    appType: 'webApp'
+                    appName: '$(webAppName)'
+                    package: '$(Pipeline.Workspace)/drop/$(artifactName).zip'
+                    deploymentMethod: 'zipDeploy'
+                  displayName: 'Deploy to Azure App Service'
+
+                # ── Smoke Test ───────────────────────────────
+                - script: |
+                    echo "Waiting 30 seconds for deployment to stabilize..."
+                    sleep 30
+                    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                      "https://$(webAppName).azurewebsites.net" || echo "000")
+                    echo "HTTP Status: ${HTTP_STATUS}"
+                    if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
+                      echo "Smoke test PASSED — site is responding."
+                    else
+                      echo "Smoke test WARNING — HTTP ${HTTP_STATUS}. Check the deployment logs."
+                      exit 1
+                    fi
+                  displayName: 'Post-deploy smoke test'
