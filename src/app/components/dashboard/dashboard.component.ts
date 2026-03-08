@@ -109,10 +109,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
   // ── Sanitized iframe URLs ─────────────────────
   kpiAppUrl!: SafeResourceUrl;
   aiAppUrl!: SafeResourceUrl;
+  weatherAppUrl!: SafeResourceUrl;
 
   // ── Iframe readiness flags ────────────────────
   kpiIframeReady = false;
   aiIframeReady = false;
+  weatherIframeReady = false;
+
+  // ── Weather / AI cycle switching ──────────────
+  showWeather = false;
+  private aiCycleCount = 0;
+  private cycleTimer: ReturnType<typeof setInterval> | null = null;
 
   // ── Visual Bus — neon pulse states ────────────
   kpiPulse: 'idle' | 'active' = 'idle';
@@ -121,16 +128,20 @@ export class DashboardComponent implements OnInit, OnDestroy {
   // ── Crash Recovery — status dots ──────────────
   kpiStatus: 'healthy' | 'crashed' | 'recovering' = 'healthy';
   aiStatus:  'healthy' | 'crashed' | 'recovering' = 'healthy';
+  weatherStatus: 'healthy' | 'crashed' | 'recovering' = 'healthy';
 
   // ── Heartbeat Health ──────────────────────────
   kpiHealth: IframeHealthStatus = 'online';
   aiHealth:  IframeHealthStatus = 'online';
+  weatherHealth: IframeHealthStatus = 'online';
   kpiMissedPings = 0;
   aiMissedPings  = 0;
+  weatherMissedPings = 0;
 
   // ── Iframe element references ─────────────────
-  @ViewChild('kpiIframe', { static: false }) kpiIframeRef!: ElementRef<HTMLIFrameElement>;
-  @ViewChild('aiIframe', { static: false })  aiIframeRef!: ElementRef<HTMLIFrameElement>;
+  @ViewChild('kpiIframe', { static: false })     kpiIframeRef!: ElementRef<HTMLIFrameElement>;
+  @ViewChild('aiIframe', { static: false })      aiIframeRef!: ElementRef<HTMLIFrameElement>;
+  @ViewChild('weatherIframe', { static: false }) weatherIframeRef!: ElementRef<HTMLIFrameElement>;
 
   private subscriptions: Subscription[] = [];
 
@@ -185,6 +196,29 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.aiAppUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
       'assets/ai-app.html',
     );
+    this.weatherAppUrl = this.sanitizer.bypassSecurityTrustResourceUrl(
+      'assets/weather-app.html',
+    );
+
+    // ── Cycle timer: 3/5 AI, 2/5 Weather ──
+    const cycleIntervalMs = (parseInt(intervalParam || '10', 10)) * 1000;
+    this.cycleTimer = setInterval(() => {
+      this.zone.run(() => {
+        this.aiCycleCount = (this.aiCycleCount + 1) % 5;
+        // Cycles 0,1,2 → AI | Cycles 3,4 → Weather
+        const wasWeather = this.showWeather;
+        this.showWeather = this.aiCycleCount >= 3;
+        if (this.showWeather !== wasWeather) {
+          if (this.showWeather) {
+            this.postMessageService.sendMessageTo('AI_APP', { type: 'HOLD', target: 'AI_APP', payload: { hold: true } });
+            this.postMessageService.sendMessageTo('WEATHER_APP', { type: 'HOLD', target: 'WEATHER_APP', payload: { hold: false } });
+          } else {
+            this.postMessageService.sendMessageTo('WEATHER_APP', { type: 'HOLD', target: 'WEATHER_APP', payload: { hold: true } });
+            this.postMessageService.sendMessageTo('AI_APP', { type: 'HOLD', target: 'AI_APP', payload: { hold: false } });
+          }
+        }
+      });
+    }, cycleIntervalMs);
 
     // Layout changes from the broker.
     this.subscriptions.push(
@@ -214,6 +248,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
             this.aiStatus = status;
             if (status === 'crashed' || status === 'recovering') { this.aiIframeReady = false; }
           }
+          if (id === 'WEATHER_APP') {
+            this.weatherStatus = status;
+            if (status === 'crashed' || status === 'recovering') { this.weatherIframeReady = false; }
+          }
         });
       }),
     );
@@ -222,10 +260,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.subscriptions.push(
       this.postMessageService.iframeHealth$.subscribe((healthMap) => {
         this.zone.run(() => {
-          const kpi = healthMap.get('KPI_APP');
-          const ai  = healthMap.get('AI_APP');
-          if (kpi) { this.kpiHealth = kpi.status; this.kpiMissedPings = kpi.missedPings; }
-          if (ai)  { this.aiHealth  = ai.status;  this.aiMissedPings  = ai.missedPings; }
+          const kpi     = healthMap.get('KPI_APP');
+          const ai      = healthMap.get('AI_APP');
+          const weather = healthMap.get('WEATHER_APP');
+          if (kpi)     { this.kpiHealth     = kpi.status;     this.kpiMissedPings     = kpi.missedPings; }
+          if (ai)      { this.aiHealth      = ai.status;      this.aiMissedPings      = ai.missedPings; }
+          if (weather) { this.weatherHealth = weather.status; this.weatherMissedPings = weather.missedPings; }
         });
       }),
     );
@@ -233,9 +273,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     document.removeEventListener('fullscreenchange', this.onFullscreenChange);
+    if (this.cycleTimer) { clearInterval(this.cycleTimer); }
     this.subscriptions.forEach((s) => s.unsubscribe());
     this.postMessageService.unregisterIframe('KPI_APP');
     this.postMessageService.unregisterIframe('AI_APP');
+    this.postMessageService.unregisterIframe('WEATHER_APP');
   }
 
   // ─────────────────────────────────────────────
@@ -271,6 +313,22 @@ export class DashboardComponent implements OnInit, OnDestroy {
       type: 'DATA_UPDATE',
       target: 'AI_APP',
       payload: { shellReady: true },
+    });
+  }
+
+  onWeatherIframeLoad(): void {
+    this.weatherIframeReady = true;
+
+    this.postMessageService.registerIframe(
+      'WEATHER_APP',
+      this.weatherIframeRef.nativeElement,
+    );
+
+    // Weather starts hidden — hold it until the cycle brings it to foreground
+    this.postMessageService.sendMessageTo('WEATHER_APP', {
+      type: 'HOLD',
+      target: 'WEATHER_APP',
+      payload: { hold: true },
     });
   }
 
@@ -311,7 +369,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   restartApp(iframeId: string): void {
     if (iframeId === 'KPI_APP') { this.kpiIframeReady = false; this.kpiStatus = 'crashed'; }
-    if (iframeId === 'AI_APP')  { this.aiIframeReady = false;  this.aiStatus = 'crashed'; }
+    if (iframeId === 'AI_APP')      { this.aiIframeReady = false;      this.aiStatus = 'crashed'; }
+    if (iframeId === 'WEATHER_APP') { this.weatherIframeReady = false; this.weatherStatus = 'crashed'; }
 
     // The broker will flip status to 'recovering' then (load) → 'healthy'.
     setTimeout(() => this.postMessageService.restartApp(iframeId), 1000);
@@ -329,7 +388,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.showCrashControls = !this.showCrashControls;
     const msg = { type: 'TOGGLE_CRASH_BTN' as const, payload: { visible: this.showCrashControls } };
     this.postMessageService.sendMessageTo('KPI_APP', { ...msg, target: 'KPI_APP' });
-    this.postMessageService.sendMessageTo('AI_APP',  { ...msg, target: 'AI_APP'  });
+    this.postMessageService.sendMessageTo('AI_APP',      { ...msg, target: 'AI_APP'      });
+    this.postMessageService.sendMessageTo('WEATHER_APP', { ...msg, target: 'WEATHER_APP' });
   }
 
   // ─────────────────────────────────────────────

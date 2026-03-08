@@ -1,0 +1,1162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Weather Stream</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #06060f;
+      color: #e2e8f0;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    /* ── Background canvas ──────────────────────────── */
+    #bgCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── App wrapper ────────────────────────────────── */
+    .app-wrapper {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: clamp(18px,3.5vh,36px) clamp(20px,4vw,36px) clamp(14px,2.5vh,28px);
+    }
+
+    /* ── Header ─────────────────────────────────────── */
+    .app-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: clamp(18px,3vh,32px);
+      flex-shrink: 0;
+    }
+
+    .header-title {
+      font-size: clamp(0.85rem,3vw,1.6rem);
+      font-weight: 300;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      overflow: hidden;
+      white-space: nowrap;
+      height: 1.4em;
+      position: relative;
+    }
+
+    @keyframes gradShift { to { background-position: 200% center; } }
+    @keyframes titlePulse { 0%,100% { opacity:1; } 50% { opacity:.82; } }
+
+    .ticker-span {
+      position: absolute;
+      top: 50%;
+      white-space: nowrap;
+      will-change: transform;
+      background: linear-gradient(90deg, #00d4ff, #a855f7, #ff2fa0, #00d4ff);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: gradShift 5s linear infinite, titlePulse 6s ease-in-out infinite;
+    }
+
+    .update-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(7px,1.4vw,12px);
+      font-size: clamp(1rem,3vw,1.7rem);
+      font-family: 'Courier New', 'Lucida Console', monospace;
+      font-weight: 300;
+      letter-spacing: .15em;
+      margin-top: 50px;
+      margin-bottom: clamp(12px,2vh,22px);
+      flex-shrink: 0;
+      background: linear-gradient(90deg, #c084fc, #818cf8, #e879f9, #c084fc);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: gradShift 7s linear infinite, badgeZoom 3.5s ease-in-out infinite;
+    }
+
+    @keyframes badgeZoom {
+      0%   { transform: scale(1.3); opacity: 0.4; }
+      50%  { transform: scale(1);   opacity: 1;   }
+      100% { transform: scale(1.3); opacity: 0.4; }
+    }
+
+    .live-dot {
+      width: clamp(8px,1.6vw,13px);
+      height: clamp(8px,1.6vw,13px);
+      border-radius: 50%;
+      background: #c084fc;
+      flex-shrink: 0;
+      -webkit-text-fill-color: initial;
+      box-shadow: 0 0 6px #a855f7, 0 0 14px rgba(192,132,252,0.6);
+      animation: dot-matrix 1.2s ease-in-out infinite;
+    }
+
+    @keyframes dot-matrix {
+      0%, 100% { transform: scale(1);    box-shadow: 0 0 6px #a855f7, 0 0 14px rgba(192,132,252,0.6); }
+      50%       { transform: scale(1.35); box-shadow: 0 0 10px #c084fc, 0 0 24px rgba(192,132,252,0.8), 0 0 40px rgba(192,132,252,0.3); }
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.4; transform: scale(0.75); }
+    }
+
+    /* ── Weather stage ─────────────────────────────── */
+    .weather-stage {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: center;
+      min-height: 0;
+    }
+
+    .weather-card {
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.38s ease, transform 0.38s ease;
+    }
+
+    .weather-card.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── Typewriter cursor ──────────────────────────── */
+    .tw-cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1em;
+      background: currentColor;
+      margin-left: 2px;
+      vertical-align: text-bottom;
+      animation: twBlink 0.75s step-end infinite;
+    }
+    @keyframes twBlink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0; }
+    }
+
+    /* ── Location label ────────────────────────────── */
+    .location-label {
+      font-size: clamp(0.68rem,2vw,1rem);
+      letter-spacing: 1.8px;
+      text-transform: uppercase;
+      color: #6366f1;
+      margin-bottom: clamp(8px,1.5vh,14px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .location-label::before {
+      content: '';
+      display: inline-block;
+      width: clamp(5px,1vw,7px);
+      height: clamp(5px,1vw,7px);
+      border-radius: 50%;
+      background: #6366f1;
+      animation: pulse-dot 3s ease-in-out infinite;
+    }
+
+    /* ── Type badge ─────────────────────────────────── */
+    .type-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: clamp(0.72rem,2.4vw,1.2rem);
+      font-weight: 700;
+      letter-spacing: 1.8px;
+      text-transform: uppercase;
+      padding: clamp(5px,1vh,9px) clamp(12px,2.5vw,20px);
+      border-radius: 4px;
+      margin-bottom: clamp(14px,2.5vh,24px);
+      border: 1px solid;
+      color: #00e8c0;
+      border-color: rgba(0,232,192,.3);
+      background: rgba(0,232,192,.08);
+    }
+
+    /* ── Temperature hero ──────────────────────────── */
+    .temp-hero {
+      font-size: clamp(3rem,12vw,6rem);
+      font-weight: 200;
+      line-height: 1;
+      color: #f1f5f9;
+      margin-bottom: clamp(6px,1vh,12px);
+      letter-spacing: -2px;
+    }
+
+    .temp-hero .weather-emoji {
+      font-size: 0.7em;
+      margin-right: clamp(4px,1vw,10px);
+      vertical-align: middle;
+    }
+
+    .temp-divider {
+      width: clamp(32px,6vw,54px);
+      height: clamp(2px,0.4vh,4px);
+      border-radius: 2px;
+      margin-bottom: clamp(12px,2vh,20px);
+      margin-left: auto;
+      margin-right: auto;
+      background: #00e8c0;
+    }
+
+    /* ── Condition description ──────────────────────── */
+    .condition-text {
+      font-size: clamp(1.4rem,5.04vw,2.8rem);
+      line-height: 1.75;
+      color: #94a3b8;
+      margin-bottom: clamp(12px,2vh,20px);
+    }
+
+    /* ── Detail metrics ────────────────────────────── */
+    .detail-row {
+      font-size: clamp(1.05rem,3.36vw,1.68rem);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: #475569;
+      margin-bottom: clamp(14px,2.5vh,22px);
+    }
+
+    .detail-row span { color: #64748b; }
+
+    /* ── 7-Day Forecast Grid ───────────────────────── */
+    .forecast-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: clamp(6px,1.2vw,14px);
+      margin-top: clamp(12px,2.5vh,24px);
+      flex-shrink: 0;
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity .4s ease .2s, transform .4s ease .2s;
+    }
+
+    .forecast-grid.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .forecast-day {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: clamp(3px,.7vh,8px);
+      padding: clamp(6px,1.2vh,14px) clamp(6px,1.2vw,14px);
+      border-radius: 6px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid rgba(99,102,241,.12);
+      transition: background .2s;
+    }
+
+    .forecast-day:hover {
+      background: rgba(99,102,241,.08);
+    }
+
+    .forecast-day .fc-name {
+      font-size: clamp(0.58rem,1.8vw,0.85rem);
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #818cf8;
+    }
+
+    .forecast-day .fc-icon {
+      font-size: clamp(1.2rem,4vw,2rem);
+      line-height: 1;
+    }
+
+    .forecast-day .fc-temps {
+      display: flex;
+      align-items: baseline;
+      gap: clamp(4px,1vw,10px);
+    }
+
+    .forecast-day .fc-hi {
+      font-size: clamp(0.7rem,2vw,1rem);
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .forecast-day .fc-lo {
+      font-size: clamp(0.6rem,1.6vw,0.82rem);
+      color: #64748b;
+    }
+
+    /* ── Responsive: forecast adjustments ───────────── */
+    @media (max-height: 520px) {
+      .forecast-grid { margin-top: 6px; gap: 4px; }
+      .forecast-day { padding: 4px 5px; }
+      .forecast-day .fc-icon { font-size: clamp(0.9rem,2.5vw,1.3rem); }
+    }
+
+    @media (max-height: 420px) and (min-width: 480px) {
+      .forecast-grid { margin-top: 4px; gap: 3px; }
+      .forecast-day { padding: 3px 4px; }
+      .forecast-day .fc-name { font-size: 0.5rem; }
+      .forecast-day .fc-icon { font-size: 1rem; }
+      .forecast-day .fc-hi, .forecast-day .fc-lo { font-size: 0.55rem; }
+    }
+
+    /* ── Progress bar ──────────────────────────────── */
+    .progress-wrap {
+      flex-shrink: 0;
+      margin-top: clamp(14px,2.5vh,24px);
+    }
+
+    .progress-track {
+      height: clamp(2px,0.4vh,4px);
+      background: rgba(255,255,255,.07);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: clamp(10px,2vh,18px);
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 2px;
+      width: 100%;
+      transform-origin: left;
+    }
+
+    /* ── Crash button ──────────────────────────────── */
+    .btn-crash {
+      position: absolute;
+      bottom: 12px;
+      right: 12px;
+      z-index: 10;
+      padding: 4px 10px;
+      font-size: 0.62rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 5px;
+      background: rgba(239,68,68,.45);
+      color: #fff;
+      cursor: pointer;
+      transition: background 200ms;
+      display: none;
+    }
+
+    .btn-crash:hover { background: rgba(220,38,38,.75); }
+
+    /* ── Responsive: short viewport (portrait strip) ── */
+    @media (max-height: 520px) {
+      .app-wrapper     { padding: 10px 14px 10px; }
+      .app-header      { margin-bottom: 10px; }
+      .temp-hero       { font-size: clamp(2rem,8vw,3.5rem); }
+      .condition-text  { font-size: clamp(1.12rem,3.92vw,1.96rem); line-height: 1.6; }
+      .progress-wrap   { margin-top: 10px; }
+      .type-badge      { margin-bottom: 10px; }
+    }
+
+    /* ── Two-column layout for wide-and-short strip ── */
+    @media (max-height: 420px) and (min-width: 480px) {
+      .app-wrapper {
+        padding: 8px 20px 8px;
+        gap: 0;
+      }
+
+      .app-header {
+        margin-bottom: 6px;
+        align-items: center;
+      }
+
+      .update-badge { display: none; }
+
+      .weather-stage { justify-content: flex-start; }
+
+      .temp-hero       { font-size: clamp(1.8rem,6vw,3rem); margin-bottom: 4px; }
+      .condition-text  { font-size: clamp(1rem,2.6vw,1.4rem); line-height: 1.5; margin-bottom: 5px; }
+      .detail-row      { margin-bottom: 0; font-size: clamp(0.868rem,2.1vw,1.148rem); }
+      .type-badge      { margin-bottom: 6px; font-size: clamp(0.6rem,1.6vw,0.85rem); padding: 3px 9px; }
+      .temp-divider    { display: none; }
+      .progress-wrap   { margin-top: 8px; }
+      .progress-track  { margin-bottom: 6px; }
+    }
+
+    @media (max-width: 300px) {
+      .temp-hero       { font-size: clamp(2rem,9vw,3rem); }
+      .condition-text  { font-size: clamp(1.19rem,4.9vw,1.82rem); }
+      .header-title    { font-size: clamp(0.75rem,3.5vw,1.2rem); }
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="bgCanvas"></canvas>
+
+<div class="app-wrapper">
+
+  <!-- Header -->
+  <div class="app-header">
+    <div style="flex:1;min-width:0;overflow:hidden;">
+      <div class="header-title" id="headerTicker"></div>
+    </div>
+  </div>
+
+  <!-- Update badge -->
+  <div class="update-badge">
+    <span class="live-dot"></span>
+    LIVE FEED
+  </div>
+
+  <!-- Weather card -->
+  <div class="weather-stage">
+    <div class="weather-card" id="weatherCard">
+      <div class="location-label" id="locationLabel">Loading…</div>
+      <div class="type-badge">◈ Live Weather</div>
+      <div class="temp-hero" id="tempHero">—</div>
+      <div class="temp-divider"></div>
+      <div class="condition-text" id="conditionText"></div>
+      <div class="detail-row" id="detailRow"></div>
+
+      <!-- 6-Day Forecast (2×3 grid, excludes today) -->
+      <div class="forecast-grid" id="forecastGrid"></div>
+    </div>
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-wrap">
+    <div class="progress-track">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Crash simulation -->
+<button class="btn-crash" onclick="simulateCrash()">💥 Crash</button>
+
+<script>
+  // ── Config ──────────────────────────────────────────
+  const POLL_MS       = 10_000;      // API poll interval
+  const TRANSITION_MS = 380;         // fade out/in duration
+  const API_BASE      = 'https://api.open-meteo.com/v1/forecast';
+  const DEFAULT_LAT   = 47.1585;
+  const DEFAULT_LON   = 27.6014;
+  const DEFAULT_CITY  = 'Iași, Romania';
+
+  const CURRENT_FIELDS = [
+    'temperature_2m',
+    'relative_humidity_2m',
+    'apparent_temperature',
+    'wind_speed_10m',
+    'weather_code'
+  ].join(',');
+
+  const DAILY_FIELDS = 'weather_code,temperature_2m_max,temperature_2m_min';
+  const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  // ── State ───────────────────────────────────────────
+  let killed      = false;
+  let held        = true;       // starts on hold (hidden at boot)
+  let pollTimer   = null;
+  let progressRaf = null;
+
+  // ── Weather-themed background tints ─────────────────
+  let nebulaColor = { r: 99, g: 102, b: 241, a: 0.10 };
+  let weatherType = 'clear'; // current animation type
+
+  const WEATHER_THEMES = {
+    clear:  { r: 255, g: 183, b: 77,  a: 0.35 },
+    cloudy: { r: 120, g: 130, b: 160, a: 0.28 },
+    fog:    { r: 160, g: 170, b: 190, a: 0.26 },
+    rain:   { r: 50,  g: 140, b: 200, a: 0.32 },
+    snow:   { r: 140, g: 180, b: 240, a: 0.32 },
+    storm:  { r: 168, g: 85,  b: 247, a: 0.36 },
+  };
+
+  function getWeatherTheme(code) {
+    if (code <= 1) { weatherType = 'clear';  return WEATHER_THEMES.clear;  }
+    if (code <= 3) { weatherType = 'cloudy'; return WEATHER_THEMES.cloudy; }
+    if (code <= 48){ weatherType = 'fog';    return WEATHER_THEMES.fog;    }
+    if (code <= 65){ weatherType = 'rain';   return WEATHER_THEMES.rain;   }
+    if (code <= 77){ weatherType = 'snow';   return WEATHER_THEMES.snow;   }
+    if (code >= 80 && code <= 82) { weatherType = 'rain';  return WEATHER_THEMES.rain;  }
+    if (code >= 85 && code <= 86) { weatherType = 'snow';  return WEATHER_THEMES.snow;  }
+    weatherType = 'storm'; return WEATHER_THEMES.storm;
+  }
+
+  // ── WMO Weather Code Mapper ─────────────────────────
+  const WMO_CODES = {
+    0:  { desc: 'Clear Sky',        icon: '☀️' },
+    1:  { desc: 'Mainly Clear',     icon: '🌤️' },
+    2:  { desc: 'Partly Cloudy',    icon: '⛅' },
+    3:  { desc: 'Overcast',         icon: '☁️' },
+    45: { desc: 'Fog',              icon: '🌫️' },
+    48: { desc: 'Depositing Fog',   icon: '🌫️' },
+    51: { desc: 'Light Drizzle',    icon: '🌦️' },
+    53: { desc: 'Moderate Drizzle', icon: '🌦️' },
+    55: { desc: 'Dense Drizzle',    icon: '🌧️' },
+    61: { desc: 'Slight Rain',      icon: '🌧️' },
+    63: { desc: 'Moderate Rain',    icon: '🌧️' },
+    65: { desc: 'Heavy Rain',       icon: '🌧️' },
+    71: { desc: 'Slight Snow',      icon: '🌨️' },
+    73: { desc: 'Moderate Snow',    icon: '🌨️' },
+    75: { desc: 'Heavy Snow',       icon: '❄️' },
+    77: { desc: 'Snow Grains',      icon: '❄️' },
+    80: { desc: 'Light Showers',    icon: '🌦️' },
+    81: { desc: 'Moderate Showers', icon: '🌧️' },
+    82: { desc: 'Violent Showers',  icon: '🌧️' },
+    85: { desc: 'Light Snow Shwr',  icon: '🌨️' },
+    86: { desc: 'Heavy Snow Shwr',  icon: '🌨️' },
+    95: { desc: 'Thunderstorm',     icon: '⛈️' },
+    96: { desc: 'T-Storm + Hail',   icon: '⛈️' },
+    99: { desc: 'T-Storm + Hail',   icon: '⛈️' },
+  };
+
+  function getWeatherInfo(code) {
+    return WMO_CODES[code] || { desc: 'Unknown', icon: '🌡️' };
+  }
+
+  // ── Typewriter helper (matching AI app) ─────────────
+  let _twTimers = [];
+  function cancelTypewriters() {
+    _twTimers.forEach(clearTimeout);
+    _twTimers = [];
+  }
+  function typewriter(el, text, speed, onDone) {
+    el.textContent = '';
+    const cursor = document.createElement('span');
+    cursor.className = 'tw-cursor';
+    el.appendChild(cursor);
+    let i = 0;
+    function tick() {
+      if (i < text.length) {
+        el.insertBefore(document.createTextNode(text[i]), cursor);
+        i++;
+        _twTimers.push(setTimeout(tick, speed));
+      } else {
+        setTimeout(() => { if (cursor.parentNode) cursor.parentNode.removeChild(cursor); }, 600);
+        if (onDone) onDone();
+      }
+    }
+    tick();
+  }
+
+  // ── API fetch ───────────────────────────────────────
+  async function fetchWeather() {
+    const url = API_BASE + '?latitude=' + DEFAULT_LAT + '&longitude=' + DEFAULT_LON
+              + '&current=' + CURRENT_FIELDS
+              + '&daily=' + DAILY_FIELDS
+              + '&forecast_days=7&timezone=auto';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('API error: ' + res.status);
+    return res.json();
+  }
+
+  // ── Render weather data ─────────────────────────────
+  function showWeather(data) {
+    const c       = data.current;
+    const units   = data.current_units;
+    const weather = getWeatherInfo(c.weather_code);
+    nebulaColor   = getWeatherTheme(c.weather_code);
+    const card    = document.getElementById('weatherCard');
+
+    cancelTypewriters();
+    card.classList.remove('visible');
+
+    setTimeout(() => {
+      // Location label
+      document.getElementById('locationLabel').textContent = DEFAULT_CITY;
+
+      // Temperature hero
+      document.getElementById('tempHero').innerHTML =
+        '<span class="weather-emoji">' + weather.icon + '</span>' +
+        Math.round(c.temperature_2m) + units.temperature_2m;
+
+      // Condition — typewritten
+      const condEl  = document.getElementById('conditionText');
+      const detailEl = document.getElementById('detailRow');
+      condEl.textContent = '';
+      detailEl.textContent = '';
+
+      const detailText = 'Feels ' + Math.round(c.apparent_temperature) + units.apparent_temperature
+        + '  ·  Humidity ' + c.relative_humidity_2m + units.relative_humidity_2m
+        + '  ·  Wind ' + c.wind_speed_10m + ' ' + units.wind_speed_10m;
+
+      setTimeout(() => {
+        typewriter(condEl, weather.desc, 32, () => {
+          setTimeout(() => typewriter(detailEl, detailText, 18), 120);
+        });
+      }, 200);
+
+      // 6-day forecast (skip today, 2×3 grid)
+      if (data.daily) {
+        const grid = document.getElementById('forecastGrid');
+        grid.classList.remove('visible');
+        grid.innerHTML = '';
+        const dd = data.daily;
+        for (let i = 1; i < dd.time.length; i++) {
+          const date = new Date(dd.time[i] + 'T00:00');
+          const name = DAY_NAMES[date.getDay()];
+          const info = getWeatherInfo(dd.weather_code[i]);
+          const hi   = Math.round(dd.temperature_2m_max[i]);
+          const lo   = Math.round(dd.temperature_2m_min[i]);
+          const unit = data.daily_units?.temperature_2m_max || '\u00B0C';
+          const el   = document.createElement('div');
+          el.className = 'forecast-day';
+          el.innerHTML =
+            '<span class="fc-name">' + name + '</span>'
+            + '<span class="fc-icon">' + info.icon + '</span>'
+            + '<div class="fc-temps">'
+            + '<span class="fc-hi">' + hi + unit + '</span>'
+            + '<span class="fc-lo">' + lo + unit + '</span>'
+            + '</div>';
+          grid.appendChild(el);
+        }
+        setTimeout(() => grid.classList.add('visible'), 50);
+      }
+
+      card.classList.add('visible');
+    }, TRANSITION_MS);
+  }
+
+  // ── Progress bar ────────────────────────────────────
+  function startProgress(dur) {
+    cancelAnimationFrame(progressRaf);
+    const fill = document.getElementById('progressFill');
+    fill.style.background = '#00e8c0';
+    fill.style.boxShadow  = '0 0 6px rgba(0,232,192,0.55)';
+    fill.style.transition = 'none';
+    fill.style.transform  = 'scaleX(1)';
+
+    const t0 = performance.now();
+    function tick(now) {
+      const p = Math.min((now - t0) / dur, 1);
+      fill.style.transform = 'scaleX(' + (1 - p) + ')';
+      if (p < 1) progressRaf = requestAnimationFrame(tick);
+    }
+    progressRaf = requestAnimationFrame(tick);
+  }
+
+  // ── Poll loop ───────────────────────────────────────
+  async function tick() {
+    if (killed) return;
+    try {
+      const data = await fetchWeather();
+      showWeather(data);
+      startProgress(POLL_MS);
+    } catch (err) {
+      console.error('[WEATHER] fetch failed:', err);
+      const card = document.getElementById('weatherCard');
+      const condEl = document.getElementById('conditionText');
+      card.classList.remove('visible');
+      setTimeout(() => {
+        condEl.textContent = '⚠️ Failed to load weather data. Retrying…';
+        condEl.style.color = '#fca5a5';
+        card.classList.add('visible');
+      }, TRANSITION_MS);
+    }
+  }
+
+
+
+  // ── postMessage handler (full lifecycle parity) ─────
+  window.addEventListener('message', ({ data }) => {
+    if (!data?.type) return;
+
+    if (data.type === 'PING') {
+      if (!killed) window.parent.postMessage(
+        { type: 'PONG', target: 'SHELL', payload: { app: 'WEATHER_APP', ts: Date.now() } }, '*'
+      );
+      return;
+    }
+
+    if (data.type === 'KILL') {
+      killed = true;
+      clearInterval(pollTimer);
+      document.body.style.opacity = '.4';
+      document.body.style.pointerEvents = 'none';
+      return;
+    }
+
+    if (data.type === 'TOGGLE_CRASH_BTN') {
+      const btn = document.querySelector('.btn-crash');
+      if (btn) btn.style.display = data.payload?.visible ? 'inline-block' : 'none';
+      return;
+    }
+
+    if (data.type === 'HOLD') {
+      held = !!data.payload?.hold;
+      if (!held && !killed) {
+        tick();      // single fetch when coming to foreground
+      } else {
+        cancelAnimationFrame(progressRaf);
+      }
+      return;
+    }
+  });
+
+  // ── Crash simulation ───────────────────────────────
+  function simulateCrash() {
+    window.parent.postMessage(
+      { type: 'CRASH_SIMULATION', target: 'SHELL', payload: { app: 'WEATHER_APP' } }, '*'
+    );
+    setTimeout(() => location.reload(), 300);
+  }
+
+  // ── Canvas background (constellation + weather FX) ──
+  (function () {
+    const canvas = document.getElementById('bgCanvas');
+    const ctx    = canvas.getContext('2d');
+    const FOCAL  = 440, CONN_D = 170;
+    let stars = [], rotY = 0, rotX = 0;
+
+    // ── Weather FX particles ──────────────────────────
+    let meteors   = [];   // rain → meteor shower
+    let dustMotes = [];   // snow → stardust drift
+    let fogBands  = [];   // fog  → nebula wisps
+    let flashes   = [];   // storm → energy pulses
+    let auroras   = [];   // clear → aurora shimmer
+    let driftClouds = []; // cloudy → dark matter clouds
+
+    function initFxParticles(W, H) {
+      // Meteors (for rain) — diagonal streaks
+      meteors = Array.from({ length: 12 }, () => ({
+        x: Math.random() * W * 1.4 - W * .2,
+        y: Math.random() * -H,
+        len: 40 + Math.random() * 80,
+        speed: 3 + Math.random() * 5,
+        alpha: 0,
+        delay: Math.random() * 200,
+        life: 0,
+      }));
+
+      // Stardust (for snow) — slow-falling sparkles
+      dustMotes = Array.from({ length: 40 }, () => ({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        r: 0.5 + Math.random() * 2,
+        vy: 0.15 + Math.random() * 0.35,
+        vx: (Math.random() - .5) * .3,
+        phase: Math.random() * Math.PI * 2,
+        twinkle: .02 + Math.random() * .03,
+      }));
+
+      // Fog wisps — horizontal nebula bands
+      fogBands = Array.from({ length: 5 }, (_, i) => ({
+        y: H * (.15 + i * .18),
+        amplitude: 12 + Math.random() * 20,
+        phase: Math.random() * Math.PI * 2,
+        speed: .004 + Math.random() * .006,
+        alpha: .03 + Math.random() * .04,
+        width: H * (.08 + Math.random() * .06),
+      }));
+
+      // Energy pulses (for storms)
+      flashes = [];
+
+      // Aurora bands (for clear)
+      auroras = Array.from({ length: 3 }, (_, i) => ({
+        y: H * (.12 + i * .22),
+        phase: Math.random() * Math.PI * 2,
+        speed: .003 + Math.random() * .004,
+        hue: 30 + i * 15,  // warm amber tones
+      }));
+
+      // Dark matter clouds (for cloudy)
+      driftClouds = Array.from({ length: 4 }, () => ({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        r: 60 + Math.random() * 100,
+        vx: (Math.random() - .5) * .2,
+        vy: (Math.random() - .5) * .1,
+        alpha: .04 + Math.random() * .04,
+      }));
+    }
+
+    function drawWeatherFx(W, H) {
+      const t = performance.now();
+
+      if (weatherType === 'rain') {
+        // ── Meteor shower ──
+        meteors.forEach(m => {
+          m.life++;
+          if (m.life < m.delay) return;
+          m.x += m.speed * .7;
+          m.y += m.speed;
+          // Fade in then out
+          const progress = ((m.y + H) % (H * 1.5)) / (H * 1.5);
+          m.alpha = progress < .1 ? progress / .1 : progress > .8 ? (1 - progress) / .2 : 1;
+          m.alpha *= .6;
+
+          const tailX = m.x - m.len * .7;
+          const tailY = m.y - m.len;
+          const grad = ctx.createLinearGradient(tailX, tailY, m.x, m.y);
+          grad.addColorStop(0, 'rgba(100,180,255,0)');
+          grad.addColorStop(0.6, 'rgba(100,180,255,' + (m.alpha * .4).toFixed(3) + ')');
+          grad.addColorStop(1, 'rgba(180,220,255,' + m.alpha.toFixed(3) + ')');
+          ctx.strokeStyle = grad;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(tailX, tailY);
+          ctx.lineTo(m.x, m.y);
+          ctx.stroke();
+
+          // Bright head
+          ctx.fillStyle = 'rgba(200,230,255,' + (m.alpha * .8).toFixed(3) + ')';
+          ctx.beginPath();
+          ctx.arc(m.x, m.y, 1.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Reset when off-screen
+          if (m.y > H + 50) {
+            m.x = Math.random() * W * 1.4 - W * .2;
+            m.y = -Math.random() * H * .5;
+            m.delay = 0;
+            m.life = 0;
+          }
+        });
+      }
+
+      if (weatherType === 'snow') {
+        // ── Stardust drift ──
+        dustMotes.forEach(d => {
+          d.y += d.vy;
+          d.x += d.vx + Math.sin(d.phase) * .15;
+          d.phase += d.twinkle;
+          if (d.y > H + 10) { d.y = -10; d.x = Math.random() * W; }
+          if (d.x < -10) d.x = W + 10;
+          if (d.x > W + 10) d.x = -10;
+
+          const twk = .5 + .5 * Math.sin(d.phase);
+          const al = .25 + .35 * twk;
+
+          const glow = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, d.r * 3);
+          glow.addColorStop(0, 'rgba(180,210,255,' + (al * .5).toFixed(3) + ')');
+          glow.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, d.r * 3, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = 'rgba(200,220,255,' + al.toFixed(3) + ')';
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, d.r * twk, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      if (weatherType === 'fog') {
+        // ── Nebula wisps ──
+        fogBands.forEach(fb => {
+          fb.phase += fb.speed;
+          const yOff = Math.sin(fb.phase) * fb.amplitude;
+          const grad = ctx.createLinearGradient(0, fb.y + yOff - fb.width, 0, fb.y + yOff + fb.width);
+          grad.addColorStop(0, 'rgba(0,0,0,0)');
+          grad.addColorStop(0.3, 'rgba(160,170,200,' + fb.alpha.toFixed(3) + ')');
+          grad.addColorStop(0.5, 'rgba(140,150,180,' + (fb.alpha * 1.2).toFixed(3) + ')');
+          grad.addColorStop(0.7, 'rgba(160,170,200,' + fb.alpha.toFixed(3) + ')');
+          grad.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, fb.y + yOff - fb.width, W, fb.width * 2);
+        });
+      }
+
+      if (weatherType === 'storm') {
+        // ── Energy pulses (occasional flash) ──
+        if (Math.random() < .005) {
+          flashes.push({
+            x: Math.random() * W,
+            y: Math.random() * H * .4,
+            r: 80 + Math.random() * 120,
+            alpha: .15 + Math.random() * .15,
+            decay: .015 + Math.random() * .01,
+          });
+        }
+        flashes.forEach(f => {
+          f.alpha -= f.decay;
+          if (f.alpha <= 0) return;
+          const glow = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, f.r);
+          glow.addColorStop(0, 'rgba(168,85,247,' + f.alpha.toFixed(3) + ')');
+          glow.addColorStop(.5, 'rgba(139,92,246,' + (f.alpha * .4).toFixed(3) + ')');
+          glow.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        flashes = flashes.filter(f => f.alpha > 0);
+
+        // ── Also run meteor shower during storms ──
+        meteors.forEach(m => {
+          m.life++;
+          m.x += m.speed * .9;
+          m.y += m.speed * 1.2;
+          const progress = ((m.y + H) % (H * 1.5)) / (H * 1.5);
+          m.alpha = progress < .1 ? progress / .1 : progress > .8 ? (1 - progress) / .2 : 1;
+          m.alpha *= .45;
+          const tailX = m.x - m.len * .7;
+          const tailY = m.y - m.len;
+          const grad = ctx.createLinearGradient(tailX, tailY, m.x, m.y);
+          grad.addColorStop(0, 'rgba(168,85,247,0)');
+          grad.addColorStop(1, 'rgba(200,160,255,' + m.alpha.toFixed(3) + ')');
+          ctx.strokeStyle = grad;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(tailX, tailY);
+          ctx.lineTo(m.x, m.y);
+          ctx.stroke();
+          if (m.y > H + 50) {
+            m.x = Math.random() * W * 1.4 - W * .2;
+            m.y = -Math.random() * H * .5;
+          }
+        });
+      }
+
+      if (weatherType === 'clear') {
+        // ── Aurora shimmer ──
+        auroras.forEach(a => {
+          a.phase += a.speed;
+          for (let x = 0; x < W; x += 3) {
+            const wave = Math.sin(x * .008 + a.phase) * 25 + Math.sin(x * .015 + a.phase * 1.7) * 12;
+            const y = a.y + wave;
+            const al = (.04 + .03 * Math.sin(x * .012 + a.phase * 2));
+            ctx.fillStyle = 'rgba(255,183,77,' + al.toFixed(3) + ')';
+            ctx.fillRect(x, y, 4, 2);
+          }
+        });
+      }
+
+      if (weatherType === 'cloudy') {
+        // ── Dark matter clouds ──
+        driftClouds.forEach(dc => {
+          dc.x += dc.vx;
+          dc.y += dc.vy;
+          if (dc.x < -dc.r) dc.x = W + dc.r;
+          if (dc.x > W + dc.r) dc.x = -dc.r;
+          if (dc.y < -dc.r) dc.y = H + dc.r;
+          if (dc.y > H + dc.r) dc.y = -dc.r;
+
+          const grad = ctx.createRadialGradient(dc.x, dc.y, 0, dc.x, dc.y, dc.r);
+          grad.addColorStop(0, 'rgba(100,110,140,' + dc.alpha.toFixed(3) + ')');
+          grad.addColorStop(.6, 'rgba(80,90,120,' + (dc.alpha * .5).toFixed(3) + ')');
+          grad.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(dc.x, dc.y, dc.r, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+    }
+
+    function buildStars(W, H) {
+      stars = Array.from({ length: 80 }, (_, i) => {
+        const z3 = (Math.random() - .5) * 460;
+        const sc = FOCAL / Math.max(10, FOCAL + z3);
+        return {
+          x3: ((Math.random() - .5) * W / sc) * .88,
+          y3: ((Math.random() - .5) * H / sc) * .88,
+          z3,
+          vx: (Math.random() - .5) * .08,
+          vy: (Math.random() - .5) * .07,
+          vz: (Math.random() - .5) * .05,
+          baseR: i < 15 ? Math.random() * 2.2 + 2 : Math.random() * 1.1 + 0.5,
+          phase:   Math.random() * Math.PI * 2,
+          twinkle: .025 + Math.random() * .04,
+          bright:  i < 15,
+        };
+      });
+    }
+
+    function proj3D(x3, y3, z3, W, H) {
+      const cy = Math.cos(rotY), sy = Math.sin(rotY);
+      const cx = Math.cos(rotX), sx = Math.sin(rotX);
+      const rx  = x3 * cy - z3 * sy;
+      const rz  = x3 * sy + z3 * cy;
+      const ry  = y3 * cx - rz * sx;
+      const rz2 = y3 * sx + rz * cx;
+      const sc  = FOCAL / Math.max(10, FOCAL + rz2);
+      return { sx: W / 2 + rx * sc, sy: H / 2 + ry * sc, depth: rz2, sc };
+    }
+
+    function draw() {
+      const W = canvas.width, H = canvas.height;
+      if (!W || !H) { requestAnimationFrame(draw); return; }
+
+      // Background
+      ctx.fillStyle = '#06060f';
+      ctx.fillRect(0, 0, W, H);
+
+      // Weather-themed nebula tint (two-pass for depth)
+      const nc = nebulaColor;
+      const g1 = ctx.createRadialGradient(W * .35, H * .25, 0, W * .35, H * .25, W * .45);
+      g1.addColorStop(0, 'rgba(' + nc.r + ',' + nc.g + ',' + nc.b + ',' + nc.a + ')');
+      g1.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g1;
+      ctx.fillRect(0, 0, W, H);
+
+      const g2 = ctx.createRadialGradient(W * .65, H * .7, 0, W * .65, H * .7, W * .6);
+      g2.addColorStop(0, 'rgba(' + nc.r + ',' + nc.g + ',' + nc.b + ',' + (nc.a * 0.5) + ')');
+      g2.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g2;
+      ctx.fillRect(0, 0, W, H);
+
+      // Advance rotation
+      rotY += .00011;
+      rotX  = Math.sin(rotY * .33) * .055;
+
+      // Drift stars
+      stars.forEach(s => {
+        s.x3 += s.vx; s.y3 += s.vy; s.z3 += s.vz;
+        s.phase += s.twinkle;
+        if (Math.abs(s.z3) > 220)    s.vz *= -1;
+        if (Math.abs(s.x3) > W * .73) s.vx *= -1;
+        if (Math.abs(s.y3) > H * .73) s.vy *= -1;
+      });
+
+      // Project
+      const proj = stars.map(s => {
+        const p  = proj3D(s.x3, s.y3, s.z3, W, H);
+        const df = Math.max(.18, Math.min(1.45, FOCAL / (FOCAL + p.depth + 300) * 2.1));
+        return { s, ...p, df };
+      }).filter(p => p.sx > -50 && p.sx < W + 50 && p.sy > -50 && p.sy < H + 50);
+
+      // Constellation lines
+      for (let a = 0; a < proj.length; a++) {
+        for (let b = a + 1; b < proj.length; b++) {
+          const pa = proj[a], pb = proj[b];
+          const dx = pb.sx - pa.sx, dy = pb.sy - pa.sy;
+          const d  = Math.sqrt(dx * dx + dy * dy);
+          if (d < CONN_D) {
+            const al = (1 - d / CONN_D) * .11 * pa.df * pb.df;
+            ctx.strokeStyle = 'rgba(99,102,241,' + al.toFixed(3) + ')';
+            ctx.lineWidth   = .45;
+            ctx.beginPath();
+            ctx.moveTo(pa.sx, pa.sy);
+            ctx.lineTo(pb.sx, pb.sy);
+            ctx.stroke();
+          }
+        }
+      }
+
+      // Stars
+      proj.forEach(({ s, sx, sy, df }) => {
+        const twk = .65 + .35 * Math.sin(s.phase);
+        const r   = s.baseR * df * twk;
+        const al  = (.35 + .55 * twk) * Math.min(1, df);
+
+        if (s.bright) {
+          const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 4.5);
+          glow.addColorStop(0, 'rgba(167,139,250,' + (al * .28).toFixed(2) + ')');
+          glow.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(sx, sy, r * 4.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = s.bright
+          ? 'rgba(167,139,250,' + al.toFixed(2) + ')'
+          : 'rgba(203,213,225,' + (al * .55).toFixed(2) + ')';
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(.25, r), 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Weather FX layer (on top of stars)
+      drawWeatherFx(W, H);
+
+      requestAnimationFrame(draw);
+    }
+
+    function resize() {
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+      buildStars(canvas.width, canvas.height);
+      initFxParticles(canvas.width, canvas.height);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+    draw();
+  })();
+
+  // ── Header ticker: one copy, left → right, seamless loop ──
+  (function initTicker() {
+    const container = document.getElementById('headerTicker');
+    if (!container) return;
+
+    const TEXT = 'LIVE WEATHER STREAM';
+    const s1 = document.createElement('span');
+    const s2 = document.createElement('span');
+    [s1, s2].forEach(s => {
+      s.className = 'ticker-span';
+      s.textContent = TEXT;
+      container.appendChild(s);
+    });
+
+    let started = false;
+
+    function tryStart() {
+      if (started) return;
+      const W = container.offsetWidth;
+      const T = s1.offsetWidth;
+      // If iframe is hidden, dimensions are 0 — retry later
+      if (W < 1 || T < 1) {
+        requestAnimationFrame(tryStart);
+        return;
+      }
+      started = true;
+
+      const spacing = W + T;
+      const speed = W / 7;
+
+      let x1 = 0;
+      let x2 = -spacing;
+      let last = performance.now();
+
+      s1.style.transform = 'translateX(' + x1 + 'px) translateY(-50%)';
+      s2.style.transform = 'translateX(' + x2 + 'px) translateY(-50%)';
+
+      function tick(now) {
+        const dt = (now - last) / 1000;
+        last = now;
+
+        x1 += speed * dt;
+        x2 += speed * dt;
+
+        if (x1 > W) x1 = x2 - spacing;
+        if (x2 > W) x2 = x1 - spacing;
+
+        s1.style.transform = 'translateX(' + x1 + 'px) translateY(-50%)';
+        s2.style.transform = 'translateX(' + x2 + 'px) translateY(-50%)';
+
+        requestAnimationFrame(tick);
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    requestAnimationFrame(tryStart);
+  })();
+
+  // ── Boot ────────────────────────────────────────────
+  // No initial fetch — waits for HOLD=false from shell
+</script>
+</body>
+</html>

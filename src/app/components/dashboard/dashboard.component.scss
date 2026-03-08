@@ -455,6 +455,10 @@
   flex: 1;
   border: none;
   display: block;
+
+  &[hidden] {
+    display: none;
+  }
 }
 
 // ── Loading / crash overlay ────────────────────

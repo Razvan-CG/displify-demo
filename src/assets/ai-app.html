@@ -504,6 +504,7 @@
   let rotationTimer = null;
   let progressRaf   = null;
   let killed        = false;
+  let held          = false;
 
   // ── Inline fallback data (used if fetch fails) ──────
   const FALLBACK_INSIGHTS = [
@@ -612,7 +613,7 @@
   function scheduleNext(delay) {
     clearTimeout(rotationTimer);
     rotationTimer = setTimeout(() => {
-      if (killed) return;
+      if (killed || held) return;
       showInsight(currentIndex + 1);
       scheduleNext(ROTATION_MS);
       startProgress(ROTATION_MS);
@@ -710,6 +711,18 @@
     if (data.type === 'TOGGLE_CRASH_BTN') {
       const btn = document.querySelector('.btn-crash');
       if (btn) btn.style.display = data.payload?.visible ? 'inline-block' : 'none';
+      return;
+    }
+
+    if (data.type === 'HOLD') {
+      held = !!data.payload?.hold;
+      if (held) {
+        clearTimeout(rotationTimer);
+        cancelAnimationFrame(progressRaf);
+      } else if (!killed && insights.length) {
+        scheduleNext(ROTATION_MS);
+        startProgress(ROTATION_MS);
+      }
       return;
     }
 

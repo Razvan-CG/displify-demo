@@ -64,6 +64,16 @@
               }"></span>
         <span class="health-name">AI</span>
       </div>
+
+      <div class="health-indicator" title="Weather App — {{ weatherHealth | uppercase }} (missed {{ weatherMissedPings }})">
+        <span class="health-pulse"
+              [ngClass]="{
+                'pulse-online':     weatherHealth === 'online',
+                'pulse-offline':    weatherHealth === 'offline',
+                'pulse-recovering': weatherHealth === 'recovering'
+              }"></span>
+        <span class="health-name">WX</span>
+      </div>
     </div>
 
     <span class="toolbar-divider"></span>
@@ -114,6 +124,19 @@
                 'dot-recovering': aiStatus === 'recovering'
               }"></span>
         AI
+      </button>
+
+      <button
+        class="btn-restart"
+        (click)="restartApp('WEATHER_APP')"
+        title="Simulate crash & recovery for Weather App">
+        <span class="status-dot"
+              [ngClass]="{
+                'dot-healthy':    weatherStatus === 'healthy',
+                'dot-crashed':    weatherStatus === 'crashed',
+                'dot-recovering': weatherStatus === 'recovering'
+              }"></span>
+        WX
       </button>
     </ng-container>
 
@@ -168,7 +191,7 @@
     </div>
   </section>
 
-  <!-- AI Insight Micro-app Panel -->
+  <!-- AI Insight / Weather Micro-app Panel -->
   <section
     class="iframe-wrapper ai-panel"
     [@neonPulse]="aiPulse">
@@ -179,24 +202,52 @@
               'dot-healthy':    aiStatus === 'healthy',
               'dot-crashed':    aiStatus === 'crashed',
               'dot-recovering': aiStatus === 'recovering'
-            }"></span>
-      <span class="panel-title">AI Insight</span>
+            }"
+            [hidden]="showWeather"></span>
+      <span class="status-dot"
+            [ngClass]="{
+              'dot-healthy':    weatherStatus === 'healthy',
+              'dot-crashed':    weatherStatus === 'crashed',
+              'dot-recovering': weatherStatus === 'recovering'
+            }"
+            [hidden]="!showWeather"></span>
+      <span class="panel-title">{{ showWeather ? 'Weather' : 'AI Insight' }}</span>
     </div>
 
+    <!-- AI Insight iframe — hidden when Weather is active -->
     <iframe
       #aiIframe
       [src]="aiAppUrl"
+      [hidden]="showWeather"
       (load)="onAiIframeLoad()"
       title="AI Insight Application"
       sandbox="allow-scripts allow-same-origin allow-forms"
       class="micro-app-frame">
     </iframe>
 
-    <div class="overlay" *ngIf="!aiIframeReady">
+    <!-- Weather iframe — hidden when AI is active -->
+    <iframe
+      #weatherIframe
+      [src]="weatherAppUrl"
+      [hidden]="!showWeather"
+      (load)="onWeatherIframeLoad()"
+      title="Weather Application"
+      sandbox="allow-scripts allow-same-origin allow-forms"
+      class="micro-app-frame">
+    </iframe>
+
+    <div class="overlay" *ngIf="!showWeather && !aiIframeReady">
       <div class="overlay-content">
         <span class="spinner" *ngIf="aiStatus !== 'crashed'"></span>
         <span *ngIf="aiStatus === 'crashed'" class="crash-icon">💥</span>
         <span>{{ aiStatus === 'crashed' ? 'Crashed — recovering…' : 'Loading AI App…' }}</span>
+      </div>
+    </div>
+
+    <div class="overlay" *ngIf="showWeather && !weatherIframeReady">
+      <div class="overlay-content">
+        <span class="spinner"></span>
+        <span>Loading Weather App…</span>
       </div>
     </div>
   </section>

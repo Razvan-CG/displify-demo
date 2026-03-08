@@ -12,10 +12,11 @@ export interface IframeMessage {
     | 'PING'
     | 'PONG'
     | 'KILL'
-    | 'TOGGLE_CRASH_BTN';
+    | 'TOGGLE_CRASH_BTN'
+    | 'HOLD';
 
   /** Routing: who should act on this message. */
-  target: 'SHELL' | 'KPI_APP' | 'AI_APP';
+  target: 'SHELL' | 'KPI_APP' | 'AI_APP' | 'WEATHER_APP';
 
   /** Arbitrary data attached to the message. */
   payload: unknown;

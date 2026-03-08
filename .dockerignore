@@ -20,6 +20,10 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 
+# --- CI/CD & scripts (not needed in image) ---
+azure-pipelines.yml
+scripts/
+
 # --- Misc ---
 README.md
 *.md
@@ -27,3 +31,4 @@ README.md
 npm-debug.log*
 .editorconfig
 .browserslistrc
+flow.md
