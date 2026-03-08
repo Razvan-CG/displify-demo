@@ -30,7 +30,8 @@ variables:
   nodeVersion: '18.x'
   buildConfiguration: 'production'
   artifactName: 'angular-app'
-  azureServiceConnection: 'arm-$(webAppName)'
+  webAppName: 'displify-web-player'
+  azureServiceConnection: 'arm-displify-web-player'
 
 # ═══════════════════════════════════════════════════════════════
 # STAGE 1 — BUILD & VALIDATE
@@ -158,7 +159,7 @@ stages:
                 # ── Deploy via Zip Deploy ────────────────────
                 - task: AzureWebApp@1
                   inputs:
-                    azureSubscription: '$(azureServiceConnection)'
+                    azureSubscription: 'arm-displify-web-player'
                     appType: 'webApp'
                     appName: '$(webAppName)'
                     package: '$(Pipeline.Workspace)/drop/$(artifactName).zip'
