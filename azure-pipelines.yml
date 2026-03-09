@@ -10,6 +10,7 @@ trigger:
   branches:
     include:
       - main
+      - Dev
   paths:
     exclude:
       - README.md
@@ -137,8 +138,8 @@ stages:
   - stage: Deploy
     displayName: 'Deploy to Azure'
     dependsOn: Build
-    # Only deploy on push to main (skip PR validation builds)
-    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    # Deploy on push to main or Dev
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.SourceBranch'], 'refs/heads/Dev')))
     jobs:
       - deployment: DeployToAppService
         displayName: 'Deploy to App Service'
