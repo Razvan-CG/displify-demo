@@ -1,180 +1,96 @@
-# ═══════════════════════════════════════════════════════════════
-# Displify Shell — Azure DevOps CI/CD Pipeline (v2)
-# ═══════════════════════════════════════════════════════════════
-# Angular 17 → Build → Zip Deploy → Azure App Service
-# Trigger: push to main | PR validation
-# Stages: Build & Validate → Deploy to Production
-# ═══════════════════════════════════════════════════════════════
-
 trigger:
   branches:
     include:
       - main
       - Dev
-  paths:
-    exclude:
-      - README.md
-      - docs/**
-      - '*.md'
-      - flow.md
 
-pr:
-  branches:
-    include:
-      - main
+resources:
+  - repo: self
 
-# ── Variables ────────────────────────────────────────────────
-# webAppName must be set as a pipeline variable (the setup
-# script creates it automatically).
-# ─────────────────────────────────────────────────────────────
 variables:
-  nodeVersion: '18.x'
-  buildConfiguration: 'production'
-  artifactName: 'angular-app'
-  webAppName: 'displify-web-player'
-  azureServiceConnection: 'arm-displify-web-player'
+  vmImageName: 'ubuntu-latest'
 
-# ═══════════════════════════════════════════════════════════════
-# STAGE 1 — BUILD & VALIDATE
-# ═══════════════════════════════════════════════════════════════
+  # ARM service connection for App Service deployment
+  azureSubscription: 'arm-displify-web-player'
+
+  # App Service details
+  appName: 'displify-web-player'
+  resourceGroup: 'displify-dev'
+
+  # ACR details
+  containerRegistry: 'displify.azurecr.io'
+  # Update this value if your ACR Docker service connection has a different name or id.
+  dockerRegistryServiceConnection: 'acr-displify'
+
+  # Docker image settings
+  imageRepository: 'displify-web-player'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  tag: '$(Build.BuildId)'
+
 stages:
   - stage: Build
-    displayName: 'Build & Validate'
+    displayName: 'Build and Push Image'
     jobs:
-      - job: BuildAngular
-        displayName: 'Build Angular App'
+      - job: Build
+        displayName: 'Build Docker Image'
         pool:
-          vmImage: 'ubuntu-latest'
-
+          vmImage: '$(vmImageName)'
         steps:
-          # ── Node.js Setup ──────────────────────────────────
-          - task: NodeTool@0
+          - checkout: self
+
+          - task: Docker@2
+            displayName: 'Build and push image to ACR'
             inputs:
-              versionSpec: '$(nodeVersion)'
-            displayName: 'Install Node.js $(nodeVersion)'
+              command: 'buildAndPush'
+              repository: '$(imageRepository)'
+              dockerfile: '$(dockerfilePath)'
+              buildContext: '$(Build.SourcesDirectory)'
+              containerRegistry: '$(dockerRegistryServiceConnection)'
+              tags: |
+                $(tag)
+                latest
 
-          # ── Dependency Cache ───────────────────────────────
-          - task: Cache@2
-            inputs:
-              key: 'npm | "$(Agent.OS)" | package-lock.json'
-              path: '$(System.DefaultWorkingDirectory)/node_modules'
-              restoreKeys: |
-                npm | "$(Agent.OS)"
-            displayName: 'Cache node_modules'
-
-          # ── Install Dependencies ───────────────────────────
-          - script: npm ci
-            displayName: 'Install dependencies (npm ci)'
-            workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-          # ── Build for Production ───────────────────────────
-          - script: npx ng build --configuration=$(buildConfiguration)
-            displayName: 'Build Angular (production)'
-            workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-          # ── Verify Build Output ────────────────────────────
-          - script: |
-              echo "=== Build output contents ==="
-              ls -la dist/displify-demo-v1/browser/
-              echo ""
-              echo "=== Total size ==="
-              du -sh dist/displify-demo-v1/browser/
-            displayName: 'Verify build output'
-            workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-          # ── Generate web.config (IIS SPA fallback) ─────────
-          # Included so the app works on both Windows and Linux
-          # App Service. Linux ignores it; Windows IIS needs it.
-          - script: |
-              cat > dist/displify-demo-v1/browser/web.config << 'XMLEOF'
-              <?xml version="1.0" encoding="UTF-8"?>
-              <configuration>
-                <system.webServer>
-                  <rewrite>
-                    <rules>
-                      <rule name="Angular SPA" stopProcessing="true">
-                        <match url=".*" />
-                        <conditions logicalGrouping="MatchAll">
-                          <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="true" />
-                          <add input="{REQUEST_FILENAME}" matchType="IsDirectory" negate="true" />
-                        </conditions>
-                        <action type="Rewrite" url="/index.html" />
-                      </rule>
-                    </rules>
-                  </rewrite>
-                  <staticContent>
-                    <remove fileExtension=".json" />
-                    <mimeMap fileExtension=".json" mimeType="application/json" />
-                    <remove fileExtension=".woff2" />
-                    <mimeMap fileExtension=".woff2" mimeType="font/woff2" />
-                  </staticContent>
-                </system.webServer>
-              </configuration>
-              XMLEOF
-            displayName: 'Generate web.config (SPA fallback)'
-            workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-          # ── Archive Build ──────────────────────────────────
-          - task: ArchiveFiles@2
-            inputs:
-              rootFolderOrFile: '$(System.DefaultWorkingDirectory)/dist/displify-demo-v1/browser'
-              includeRootFolder: false
-              archiveType: 'zip'
-              archiveFile: '$(Build.ArtifactStagingDirectory)/$(artifactName).zip'
-              replaceExistingArchive: true
-            displayName: 'Archive build output'
-
-          # ── Publish Artifact ───────────────────────────────
-          - task: PublishPipelineArtifact@1
-            inputs:
-              targetPath: '$(Build.ArtifactStagingDirectory)/$(artifactName).zip'
-              artifact: '$(artifactName)'
-              publishLocation: 'pipeline'
-            displayName: 'Publish pipeline artifact'
-
-  # ═══════════════════════════════════════════════════════════════
-  # STAGE 2 — DEPLOY TO AZURE APP SERVICE
-  # ═══════════════════════════════════════════════════════════════
   - stage: Deploy
-    displayName: 'Deploy to Azure'
+    displayName: 'Deploy to Azure Web App (Container)'
     dependsOn: Build
-    # Deploy on push to main or Dev
     condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), eq(variables['Build.SourceBranch'], 'refs/heads/Dev')))
     jobs:
-      - deployment: DeployToAppService
-        displayName: 'Deploy to App Service'
-        pool:
-          vmImage: 'ubuntu-latest'
+      - deployment: DeployContainer
+        displayName: 'Deploy Container Image'
         environment: 'production'
+        pool:
+          vmImage: '$(vmImageName)'
         strategy:
           runOnce:
             deploy:
               steps:
-                # ── Download Artifact ────────────────────────
-                - task: DownloadPipelineArtifact@2
+                - task: AzureWebAppContainer@1
+                  displayName: 'Deploy container to App Service'
                   inputs:
-                    artifactName: '$(artifactName)'
-                    targetPath: '$(Pipeline.Workspace)/drop'
-                  displayName: 'Download build artifact'
+                    azureSubscription: '$(azureSubscription)'
+                    appName: '$(appName)'
+                    containers: '$(containerRegistry)/$(imageRepository):$(tag)'
 
-                # ── Deploy via Zip Deploy ────────────────────
-                - task: AzureWebApp@1
+                - task: AzureCLI@2
+                  displayName: 'Resolve App Service hostname'
                   inputs:
-                    azureSubscription: 'arm-displify-web-player'
-                    appType: 'webApp'
-                    appName: '$(webAppName)'
-                    package: '$(Pipeline.Workspace)/drop/$(artifactName).zip'
-                    deploymentMethod: 'zipDeploy'
-                  displayName: 'Deploy to Azure App Service'
+                    azureSubscription: '$(azureSubscription)'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      HOST_NAME=$(az webapp show --name "$(appName)" --resource-group "$(resourceGroup)" --query defaultHostName -o tsv)
+                      if [ -z "$HOST_NAME" ]; then
+                        echo "Unable to resolve defaultHostName for $(appName)."
+                        exit 1
+                      fi
+                      echo "Resolved hostname: $HOST_NAME"
+                      echo "##vso[task.setvariable variable=resolvedHostName]$HOST_NAME"
 
-                # ── Smoke Test ───────────────────────────────
                 - script: |
-                    echo "Waiting 30 seconds for deployment to stabilize..."
+                    echo "Waiting 30 seconds for container startup..."
                     sleep 30
 
-                    APP_URL="https://$(webAppName).azurewebsites.net"
-                    echo "Smoke testing: ${APP_URL}"
-
+                    APP_URL="https://$(resolvedHostName)"
                     ATTEMPT=1
                     MAX_ATTEMPTS=6
                     HTTP_STATUS="000"
@@ -192,7 +108,7 @@ stages:
                       echo "Attempt ${ATTEMPT}/${MAX_ATTEMPTS} -> HTTP ${HTTP_STATUS}"
 
                       if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
-                        echo "Smoke test PASSED - site is responding."
+                        echo "Smoke test PASSED."
                         exit 0
                       fi
 
@@ -200,6 +116,6 @@ stages:
                       sleep 15
                     done
 
-                    echo "Smoke test FAILED - last HTTP status: ${HTTP_STATUS}. Check deployment/App Service logs."
+                    echo "Smoke test FAILED. Last HTTP status: ${HTTP_STATUS}"
                     exit 1
                   displayName: 'Post-deploy smoke test'
