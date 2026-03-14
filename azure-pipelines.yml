@@ -171,13 +171,35 @@ stages:
                 - script: |
                     echo "Waiting 30 seconds for deployment to stabilize..."
                     sleep 30
-                    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-                      "https://$(webAppName).azurewebsites.net" || echo "000")
-                    echo "HTTP Status: ${HTTP_STATUS}"
-                    if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
-                      echo "Smoke test PASSED — site is responding."
-                    else
-                      echo "Smoke test WARNING — HTTP ${HTTP_STATUS}. Check the deployment logs."
-                      exit 1
-                    fi
+
+                    APP_URL="https://$(webAppName).azurewebsites.net"
+                    echo "Smoke testing: ${APP_URL}"
+
+                    ATTEMPT=1
+                    MAX_ATTEMPTS=6
+                    HTTP_STATUS="000"
+
+                    while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+                      set +e
+                      HTTP_STATUS=$(curl -sS -L --max-time 20 -o /dev/null -w "%{http_code}" "${APP_URL}")
+                      CURL_EXIT=$?
+                      set -e
+
+                      if [ "$CURL_EXIT" -ne 0 ]; then
+                        HTTP_STATUS="000"
+                      fi
+
+                      echo "Attempt ${ATTEMPT}/${MAX_ATTEMPTS} -> HTTP ${HTTP_STATUS}"
+
+                      if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
+                        echo "Smoke test PASSED - site is responding."
+                        exit 0
+                      fi
+
+                      ATTEMPT=$((ATTEMPT + 1))
+                      sleep 15
+                    done
+
+                    echo "Smoke test FAILED - last HTTP status: ${HTTP_STATUS}. Check deployment/App Service logs."
+                    exit 1
                   displayName: 'Post-deploy smoke test'
