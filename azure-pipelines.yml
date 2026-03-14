@@ -18,9 +18,8 @@ variables:
   resourceGroup: 'displify-dev'
 
   # ACR details
+  acrName: 'displify'
   containerRegistry: 'displify.azurecr.io'
-  # Update this value if your ACR Docker service connection has a different name or id.
-  dockerRegistryServiceConnection: 'acr-displify'
 
   # Docker image settings
   imageRepository: 'displify-web-player'
@@ -38,17 +37,25 @@ stages:
         steps:
           - checkout: self
 
-          - task: Docker@2
+          - task: AzureCLI@2
             displayName: 'Build and push image to ACR'
             inputs:
-              command: 'buildAndPush'
-              repository: '$(imageRepository)'
-              dockerfile: '$(dockerfilePath)'
-              buildContext: '$(Build.SourcesDirectory)'
-              containerRegistry: '$(dockerRegistryServiceConnection)'
-              tags: |
-                $(tag)
-                latest
+              azureSubscription: '$(azureSubscription)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+
+                az acr login --name "$(acrName)"
+
+                docker build \
+                  -f "$(dockerfilePath)" \
+                  -t "$(containerRegistry)/$(imageRepository):$(tag)" \
+                  -t "$(containerRegistry)/$(imageRepository):latest" \
+                  "$(Build.SourcesDirectory)"
+
+                docker push "$(containerRegistry)/$(imageRepository):$(tag)"
+                docker push "$(containerRegistry)/$(imageRepository):latest"
 
   - stage: Deploy
     displayName: 'Deploy to Azure Web App (Container)'
